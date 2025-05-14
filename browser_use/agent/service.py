@@ -61,6 +61,7 @@ from browser_use.telemetry.views import (
 	AgentTelemetryEvent,
 )
 from browser_use.utils import check_env_variables, time_execution_async, time_execution_sync
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -885,6 +886,23 @@ class Agent(Generic[Context]):
 				self.state.last_result = result
 
 			for step in range(max_steps):
+				current_page = await self.browser_context.get_current_page()
+				if current_page:
+					logger.info(f'Current page: {current_page.url}')
+					if "https://www.google.com/sorry/" in current_page.url:
+						logger.warning("🚧 CAPTCHA page detected. Waiting for it to be solved...")
+
+						try:
+							await current_page.wait_for_url(
+								re.compile(r"^(?!.*google\.com/sorry).*"),  # google.com/sorry 以外になるまで待つ
+								timeout=180000  
+							)
+							logger.info("✅ CAPTCHA solved! Continuing.")
+						except PlaywrightTimeoutError:
+							logger.error("❌ CAPTCHA not solved within timeout.")
+							raise InterruptedError("CAPTCHA was not solved in time.")
+				logger.info(f'Current step: {step + 1}/{max_steps}')
+				
 				# Check if waiting for user input after Ctrl+C
 				if self.state.paused:
 					signal_handler.wait_for_resume()
